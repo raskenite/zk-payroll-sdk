@@ -13,6 +13,11 @@ export * from "./api";
 // ── Core Layer ──────────────────────────────────────────────────────────────
 export * from "./core";
 
+// ── Network Fallback Strategy ───────────────────────────────────────────────
+export * from "./network";
+// Fallback endpoints, retry/fallback bounds, and typed failure states are
+// defined in the network module and re-exported here for SDK consumers.
+
 // ── Backward-compat error aliases (not in the core layer) ───────────────────
 export { PayrollError, PayrollServiceErrorCode, handleApiError } from "./errors";
 
@@ -33,6 +38,7 @@ export {
   RpcTimeoutError,
   InvalidResponseError,
   ValidationError,
+  NetworkFallbackError,
   ContractErrorCode,
   WalletError,
   WalletRejectionError,
@@ -59,6 +65,7 @@ export type {
   ErrorMessageOverrides,
   ErrorCategoryType,
   ErrorCodeEntry,
+  NetworkFallbackErrorCodeType,
 } from "./errors";
 export type {
   ClientConfig,
@@ -119,9 +126,6 @@ export { TransactionWatcher } from "./events";
 export type { ConfirmationOptions, ConfirmationResult } from "./events";
 export * from "./events/index";
 export * from "./event-parser";
-
-// ── Assets ────────────────────────────────────────────────────────────────────
-export * from "./assets";
 
 // ── Proofs ────────────────────────────────────────────────────────────────────
 export {

@@ -10,7 +10,7 @@ import {
 import { BatchValidationFailedError } from "../batch/BatchPayloadBuilder";
 
 export const RetryCategory = {
-  RETRYABLE: "RETRYABLE",
+  RETRYABLE: "RETRYABLE4",
   NON_RETRYABLE: "NON_RETRYABLE",
   UNKNOWN: "UNKNOWN",
 } as const;
@@ -188,6 +188,14 @@ export interface RetryOptions {
   delayMs?: number;
   backoffFactor?: number;
   /**
+   * Optional ordered list of fallback endpoints. When the primary attempt
+   * fails with a RETRYABLE or UNKNOWN classification, `withRetry` will try
+   * each fallback endpoint in turn (bounded by `attempts`) before giving up.
+   * The `fn` callback receives the endpoint to use for the current attempt
+   * (undefined for the primary attempt).
+   */
+  fallbackEndpoints?: string[];
+  /**
    * Overall deadline in milliseconds, measured from the first attempt. Once
    * exceeded, `withRetry` stops retrying and throws the most recent error
    * (or a RetryTimeoutError if no attempt has been made yet). Unset by
@@ -225,15 +233,19 @@ export class RetryTimeoutError extends Error {
  * no benefit. RETRYABLE and UNKNOWN classifications continue retrying as
  * before.
  *
- * Passing `attempts: 1` effectively disables retrying (the loop runs `fn`
+ * Passing `attempts: 1` effectively disables retrying (the loop runs `fn
  * once and rethrows on failure without ever consulting classifyError,
  * since there is no further attempt to gate).
  */
-export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
+export async function withRetry<T>(
+  fn: (endpoint?: string) => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
   const attempts = options.attempts ?? 3;
   const delayMs = options.delayMs ?? 100;
   const backoffFactor = options.backoffFactor ?? 2;
   const timeoutMs = options.timeoutMs;
+  const fallbackEndpoints = options.fallbackEndpoints ?? [];
 
   const startedAt = Date.now();
   let currentDelay = delayMs;
@@ -244,8 +256,10 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
       throw lastError ?? new RetryTimeoutError(timeoutMs);
     }
 
+    const endpoint = attempt === 1 ? undefined : fallbackEndpoints[attempt - 2];
+
     try {
-      return await fn();
+      return await fn(endpoint);
     } catch (err) {
       lastError = err;
 
@@ -253,7 +267,6 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
 
       const retryDecision = classifyError(err);
       if (retryDecision.category === RetryCategory.NON_RETRYABLE) {
-        options.onRetry?.(attempt, err, retryDecision);
         throw err;
       }
 
