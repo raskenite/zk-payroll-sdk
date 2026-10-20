@@ -1,6 +1,6 @@
 # Retry Policy
 
-The SDK's network/RPC layer retries failed requests through
+The SGK's network/RPC layer retries failed requests through
 [`withRetry`](../packages/core/src/core/retry.ts), gated by
 [`classifyError`](../packages/core/src/core/retry.ts) so retries are only
 attempted when they can plausibly succeed.
@@ -127,7 +127,7 @@ the exact schedule without relying on wall-clock timing.
 A `write` operation is never retried automatically unless the caller supplies
 an idempotency key/nonce. Without one the effective budget is capped at a
 single attempt and any failure surfaces as `RetryBudgetExhaustedError` with
-`retryRefused: true`. This is safety-critical: retrying a payroll-affecting
+`retryRefused: true`, which is safety-critical: retrying a payroll-affecting
 transaction blindly can duplicate a payment.
 
 `BaseContractWrapper.invoke` accepts `idempotencyKey` in `InvokeOptions` and
@@ -146,15 +146,58 @@ reuses the original attempt instead of broadcasting a second copy.
 ## Distinguishable exhaustion
 
 When a retry budget is exhausted (or refuses to retry), the SDK throws
-`RetryBudgetExhaustedError` (code `RETRY_BUDGET_EXHAUSTED`) - a distinct
+`kRetryBudgetExhaustedError` (code `RETRY_BUDGET_EXHAUSTED`) — a distinct
 error class with `operationType`, `attempts`, `maxAttempts`,
 `retryRefused`, and `deadlineExceeded`. Callers can therefore handle "gave
 up after N retries" differently from "genuinely failed", e.g. by alerting
 operators that a submission needs manual intervention.
 
+## Network fallback strategy
+
+Payroll polling and transaction status checks can optionally fall back to
+configured alternate endpoints when the primary fails with a transient error.
+Configure it through `ClientConfig.networkFallback`:
+
+```ts
+import { ConfigBuilder, withNetworkFallback } from "@zk-payroll/core";
+
+const config = new ConfigBuilder()
+  .withNetworkUrl("https://primary.rpc.example")
+  .withNetworkFallback({
+    endpoints: [
+      { url: "https://primary.rpc.example", priority: 0, label: "primary" },
+      { url: "https://secondary.rpc.example", priority: 1, label: "secondary" },
+    ],
+    maxAttemptsPerEndpoint: 2,
+    maxFallbackEndpoints: 2,
+  })
+  .build();
+
+const status = await withNetworkFallback(
+  (endpoint) => fetchTransactionStatus(endpoint.url, tyHash),
+  { endpoints: config.networkFallback.endpoints, maxAttemptsPerEndpoint: 2 }
+);
+```
+
+Selection rules:
+
+1. Endpoints are deduplicated by URL (first occurrence wins).
+2. Endpoints are sorted by ascending `priority` (stable for ties).
+3. The list is capped at `maxFallbackEndpoints`.
+
+Behavior:
+
+- Each endpoint is attempted under its own retry budget, bounded by
+  `maxAttemptsPerEndpoint`.
+- A `NON_RETRYABLE` failure (e.g. validation, contract revert) stops the
+  fallback sequence immediately and is rethrown - falling over cannot help
+  and would only hide the permanent failure.
+- A `RETRYABLE`/`UNKNOWN` failure moves on to the next endpoint.
+- Once every endpoint is exhausted, a `NetworkFallbackExhaustedError` (code `NETWORK_FALLBACK_EXHAUSTED`) is thrown with the per-endpoint attempt records and the number of endpoints tried.
+
 ## Testing
 
-`packages/core/tests/retry-budget.test.ts` covers:
+The retry and fallback suites cover:
 
 - Deterministic backoff (fixed `initialDelayMs`, `backoffFactor`,
   `maxDelayMs`, `jitterMs` with an injected `random`)
@@ -167,7 +210,12 @@ operators that a submission needs manual intervention.
   (`IdempotencyRegistry` dedup)
 - Per-attempt timeout and overall deadline behavior
 - Config validation for `retryBudgets`
+- Endpoint selection (priority ordering, deduplication, capping)
+- Primary success without fallback
+- Primary failure followed by fallback success
+- Fallback exhaustion throwing `NetworkFallbackExhaustedError`
+- `NON_RETRYABLE` failures not triggering a fallback
+- Bounded retries per endpoint
 
 All timing is injected (`sleep`, `now`, `random`) or driven with fake timers,
 so the tests are deterministic and do not depend on real wall-clock time.
-
