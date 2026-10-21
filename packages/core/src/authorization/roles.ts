@@ -38,6 +38,34 @@ export class RoleListError extends Error {
   }
 }
 
+/** Thrown when a single signer address is assigned to multiple roles, violating the segregation-of-duties policy. */
+export class SegregationOfDutiesError extends Error {
+  constructor(
+    public readonly address: string,
+    public readonly roles: SignerRole[],
+    public readonly cause?: unknown
+  ) {
+    super(
+      `Signer ${address} is assigned to multiple roles (${roles.join(
+        ", "
+      )}), violating segregation of duties`
+    );
+    this.name = "SegregationOfDutiesError";
+  }
+}
+
+export interface SegregationOfDutiesReimbursement {
+  /** Roles assigned to each address, keyed by address. */
+  assignments: Record<string, SignerRole[]>;
+}
+
+export interface SegregationOfDutiesResult {
+  /** True when every address holds at most one role. */
+  valid: boolean;
+  /** Addresses that violate the policy, along with the roles they hold. */
+  violations: Array<{ address: string; roles: SignerRole[] }>;
+}
+
 function emptyRoleGroupMap(): RoleGroupMap {
   const map = {} as RoleGroupMap;
   for (const role of SIGNER_ROLE_GROUPS) {
@@ -61,7 +89,8 @@ export interface RawRoleAssignment {
  * original error preserved as `cause`.
  */
 export async function listAdminRoles(
-  fetchRaw: () => Promise<RawRoleAssignment[]>
+  fetchRaw: () => Promise<RawRoleAssignment[]>,
+  options: { enforceSegregationOfDuties?: boolean } = {}
 ): Promise<RoleListResponse> {
   let raw: RawRoleAssignment[];
   try {
@@ -82,7 +111,61 @@ export async function listAdminRoles(
     totalMembers += 1;
   }
 
+  if (options.enforceSegregationOfDuties) {
+    assertSegregationOfDuties(roles);
+  }
+
   return { roles, totalMembers };
+}
+
+/**
+ * Validates that no single address holds more than one signer role,
+ * enforcing the segregation-of-duties policy. Throws a `SegregationOfDutiesError`
+ * describing the first offending address and its roles.
+ */
+export function assertSegregationOfDuties(roles: RoleGroupMap): void {
+  const result = checkSegregationOfDuties(roles);
+  if (!result.valid) {
+    const [first] = result.violations;
+    throw new SegregationOfDutiesError(first.address, first.roles);
+  }
+}
+
+/**
+ * Checks the segregation-of-duties policy without throwing, returning all
+ * violations so callers can render actionable feedback. Addresses are
+ * compared case-insensitively and trimmed, since signer addresses may be
+ * reported in different cases across sources.
+ */
+export function checkSegregationOfDuties(
+  roles: RoleGroupMap
+): SegregationOfDutiesResult {
+  const byAddress = new Map<string, { address: string; roles: SignerRole[] }>();
+
+  for (const role of SIGNER_ROLE_GROUPS) {
+    for (const member of roles[role] ?? []) {
+      const key = normalizeAddress(member.address);
+      if (!key) continue;
+      const existing = byAddress.get(key);
+      if (existing) {
+        if (!existing.roles.includes(role)) {
+          existing.roles.push(role);
+        }
+      } else {
+        byAddress.set(key, { address: member.address, roles: [role] });
+      }
+    }
+  }
+
+  const violations = Array.from(byAddress.values()).filter(
+    (entry) => entry.roles.length > 1
+  );
+
+  return { valid: violations.length === 0, violations };
+}
+
+function normalizeAddress(address: string): string {
+  return typeof address === "string" ? address.trim().toLowerCase() : "";
 }
 
 function isSignerRole(value: string): value is SignerRole {

@@ -11,6 +11,29 @@ export interface AuthorizationPolicy {
   threshold?: number;
   weights?: Record<SignerRole, number>;
   expiryMs?: number;
+  /**
+   * Segregation of duties configuration. Roles listed here cannot be
+   * held by the same signer address within a single request.
+   */
+  segregationOfDuties?: SegregationOfDutiesPolicy;
+}
+
+export interface SegregationOfDutiesPolicy {
+  /**
+   * Whether the segregation of duties check is enforced. Defaults to true
+   * when the configuration object is present.
+   */
+  enforced?: boolean;
+  /**
+   * Explicit pairs of roles that must not be held by the same signer.
+   * When omitted, all distinct required roles are treated as incompatible.
+   */
+  incompatibleRoles?: Array<[signerRole: SignerRole, conflictingRole: SignerRole]>;
+  /**
+   * Whether to allow the same address to appear multiple times with the
+   * same role. Defaults to false.
+   */
+  allowDuplicateAddresses?: boolean;
 }
 
 export interface SignerInfo {
@@ -64,10 +87,15 @@ export interface MultiSignerCoordinatorOptions {
    */
   expiryGraceMs?: number;
   /**
-   * Whether to automatically transition pending signers to the `expired`
+   * Whether to automatically transition pending signers to the expired
    * state once the request expiry has elapsed.
    */
   autoExpire?: boolean;
+  /**
+   * Default segregation of duties configuration applied to policies that
+   * do not declare their own configuration.
+   */
+  segregationOfDuties?: SegregationOfDutiesPolicy;
 }
 
 export interface PayrollAdjustmentExpiryResult {
@@ -77,4 +105,15 @@ export interface PayrollAdjustmentExpiryResult {
   expiredSigners: SignerInfo[];
   remainingSigners: SignerInfo[];
   reason?: string;
+}
+
+export interface SegregationOfDutiesViolation {
+  address: string;
+  roles: SignerRole[];
+  message: string;
+}
+
+export interface SegregationOfDutiesValidationResult {
+  valid: boolean;
+  violations: SegregationOfDutiesViolation[];
 }
