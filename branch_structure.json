@@ -1,0 +1,21 @@
+{
+  "default_branch": "dev",
+  "branches": [
+    "dev",
+    "feat/issue-738-create-sdk-segregation-of-duties-validation",
+    "fix/issue-262-add-sdk-network-fallback-strategy",
+    "origin"
+  ],
+  "parent": {
+    "dev": null,
+    "feat/issue-738-create-sdk-segregation-of-duties-validation": "dev",
+    "fix/issue-262-add-sdk-network-fallback-strategy": "dev",
+    "origin": "dev"
+  },
+  "order": [
+    "dev",
+    "feat/issue-738-create-sdk-segregation-of-duties-validation",
+    "fix/issue-262-add-sdk-network-fallback-strategy",
+    "origin"
+  ]
+}
